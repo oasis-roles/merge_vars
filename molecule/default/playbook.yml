@@ -1,0 +1,233 @@
+# Basic merging tests, sanity checks that the expected values end up
+# in the expected places (and not in unexpected places).
+- name: Test merging host and group string vars
+  hosts: all
+  gather_facts: false
+  roles:
+    - merge_vars
+  vars:
+    # build up this playbook var from host/group vars
+    merged_vars: "{{ query('merge_vars', 'testvar') }}"
+    merged_vars_expected:
+      merge_vars_host1:
+        - hv_host1
+        - gv_common
+        - gv_host1
+      merge_vars_host2:
+        - hv_host2
+        - gv_common
+        - gv_host2
+    merged_vars_unexpected:
+      merge_vars_host1:
+        - hv_host2
+        - gv_host2
+      merge_vars_host2:
+        - hv_host1
+        - gv_host1
+
+    # test the "initial" functionality with a defined var
+    testvar: 'set_in_play'
+    merged_vars_existing: "{{ query('merge_vars', 'testvar', initial=[testvar]) }}"
+    merged_vars_existing_expected:
+      merge_vars_host1:
+        - set_in_play
+        - hv_host1
+        - gv_common
+        - gv_host1
+      merge_vars_host2:
+        - set_in_play
+        - hv_host2
+        - gv_common
+        - gv_host2
+  tasks:
+    # should be exactly the same as when using the values set in a playbook var,
+    # the `with_` query should match the merged_vars query.
+    # This is only done once, since it's double-checking that ansible still
+    # works how it worked when the plugins were written, and the expected use
+    # of this role is by injecting vars into a play, not by directly using the
+    # query in a task's `with_` expression.
+    - name: Assert that vars are correctly merged and set per-host in a task
+      assert:
+        that:
+          - item in merged_vars_expected[inventory_hostname]
+          - item not in merged_vars_unexpected[inventory_hostname]
+      loop: "{{ query('merge_vars', 'testvar') }}"
+
+    # Normal testing proceeds here, comparing the generated output with the expected results.
+    - name: Assert that playbook vars are correctly merged and set per-host
+      assert:
+        that:
+          - item in merged_vars_expected[inventory_hostname]
+          - item not in merged_vars_unexpected[inventory_hostname]
+      loop: "{{ merged_vars }}"
+
+    - name: Assert that playbook vars are correctly merged and set per-host
+      assert:
+        that:
+          - item in merged_vars_existing_expected[inventory_hostname]
+          # unexpected list is the same as in the previous case
+          - item not in merged_vars_unexpected[inventory_hostname]
+      loop: "{{ merged_vars_existing }}"
+
+
+- name: Test merging only host vars
+  hosts: all
+  gather_facts: false
+  roles:
+    - merge_vars
+  vars:
+    merged_host_vars: "{{ query('merge_vars', 'testvar', group_vars=False) }}"
+    merged_host_vars_expected:
+      merge_vars_host1:
+        - hv_host1
+      merge_vars_host2:
+        - hv_host2
+    merged_host_vars_unexpected:
+      merge_vars_host1:
+        - hv_host2
+        - gv_common
+        - gv_host1
+        - gv_host2
+      merge_vars_host2:
+        - hv_host1
+        - gv_common
+        - gv_host2
+        - gv_host1
+  tasks:
+    - name: Assert that host vars are correctly merged and set per-host in a task
+      assert:
+        that:
+          - item in merged_host_vars_expected[inventory_hostname]
+          - item not in merged_host_vars_unexpected[inventory_hostname]
+      loop: "{{ merged_host_vars }}"
+
+
+- name: Test merging only group vars
+  hosts: all
+  gather_facts: false
+  roles:
+    - merge_vars
+  vars:
+    merged_group_vars: "{{ query('merge_vars', 'testvar', host_vars=False) }}"
+    merged_group_vars_expected:
+      merge_vars_host1:
+        - gv_common
+        - gv_host1
+      merge_vars_host2:
+        - gv_common
+        - gv_host2
+    merged_group_vars_unexpected:
+      merge_vars_host1:
+        - hv_host1
+        - hv_host2
+        - gv_host2
+      merge_vars_host2:
+        - hv_host1
+        - hv_host2
+        - gv_host1
+  tasks:
+    - name: Assert that group vars are correctly merged and set per-host in a task
+      assert:
+        that:
+          - item in merged_group_vars_expected[inventory_hostname]
+          - item not in merged_group_vars_unexpected[inventory_hostname]
+      loop: "{{ merged_group_vars }}"
+
+
+# Tasks for minimal integration testing with ansible to make sure that the
+# documented filters, 'flatten' and 'unique', work as expected. No assertions
+# are made about whether or not flatten and unique alter the results; these
+# tests are only here to make sure the role doesn't somehow break when used
+# with these builtin filters.
+- name: Test merging host and group list variables with ansible filters
+  hosts: all
+  gather_facts: false
+  roles:
+    - merge_vars
+  vars:
+    # Flattened result
+    repolist_flat: "{{ query('merge_vars', 'repolist') | flatten }}"
+    repolist_flat_expected:
+      merge_vars_host1:
+        - repo_common
+        - repo_duplicated
+        - repo_host1
+        - repo_duplicated
+      merge_vars_host2:
+        - repo_common
+        - repo_duplicated
+        - repo_host2
+        - repo_duplicated
+
+    # Flattened result with dupes removed
+    repolist_flat_uniq: "{{ query('merge_vars', 'repolist') | flatten | unique }}"
+    repolist_flat_uniq_expected:
+      merge_vars_host1:
+        - repo_common
+        - repo_duplicated
+        - repo_host1
+      merge_vars_host2:
+        - repo_common
+        - repo_duplicated
+        - repo_host2
+  tasks:
+    - name: Assert that list values work as expected with ansible filters
+      assert:
+        that:
+          - repolist_flat | sort == repolist_flat_expected[inventory_hostname] | sort
+          - repolist_flat_uniq | sort == repolist_flat_uniq_expected[inventory_hostname] | sort
+
+- name: Test argument error handling
+  # only need one host for these tests
+  hosts: merge_vars_host1
+  gather_facts: false
+  roles:
+    - merge_vars
+  tasks:
+    # This tests argument handling only. Testing of the initial value for
+    # functional correctness is done in an earlier task.
+    - name: Run a task with valid arguments
+      debug:
+        msg: |
+          {{ query('merge_vars', 'varname',
+             initial=['a list']) }}
+      register: task_valid
+      ignore_errors: true
+    - name: Assert that tasks succeed with valid arguments
+      assert:
+        that:
+          - task_valid is success
+
+    - name: Run a task with missing arguments
+      debug:
+        msg: "{{ query('merge_vars') }}"
+      register: task_no_args
+      ignore_errors: true
+    - name: Assert that tasks fail due to missing args
+      assert:
+        that:
+          - task_no_args is failed
+          - "'one string argument' in task_no_args.msg"
+
+    - name: Run a task with an invalid initial value
+      debug:
+        msg: "{{ query('merge_vars', 'varname', initial='not a list') }}"
+      register: task_invalid_initial
+      ignore_errors: true
+    - name: Assert that tasks fail due to invalid initial value
+      assert:
+        that:
+          - task_invalid_initial is failed
+          - "'must be a list' in task_invalid_initial.msg"
+
+- name: Test with_* lookup works with the custom plugin
+  hosts: merge_vars_host1
+  gather_facts: false
+  roles:
+    - merge_vars
+  tasks:
+    - debug:
+        var: item
+      # ansible-lint will complain about using a bare variable in "with_" (rule 104) but that does
+      # not apply in this case as the string literal "repolist" is what's being passed in here
+      with_merge_vars: repolist  # noqa 104
