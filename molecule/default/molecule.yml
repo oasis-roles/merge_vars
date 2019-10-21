@@ -1,0 +1,75 @@
+dependency:
+  name: galaxy
+  options:
+    role-file: molecule/shared/requirements.yml
+driver:
+  # Since this role only messes with ansible vars, provisioning can be
+  # delegated and all work can be done on localhost.
+  name: delegated
+  options:
+    managed: false
+    ansible_connection_options:
+      ansible_connection: local
+lint:
+  name: yamllint
+  options:
+    config-file: tests/yamllint.yml
+platforms:
+  - name: merge_vars_host1
+    groups:
+      - group_common
+      - group_1
+  - name: merge_vars_host2
+    groups:
+      - group_common
+      - group_2
+provisioner:
+  name: ansible
+  lint:
+    name: ansible-lint
+  # testvar values are for string merging tests,
+  # repolist values are for list merging tests
+  # see converge playbook for how these are all expected
+  # to be applied to the two hosts
+  inventory:
+    group_vars:
+      group_common:
+        testvar: gv_common
+        repolist:
+          - repo_common
+          - repo_duplicated
+      group_1:
+        testvar: gv_host1
+        repolist:
+          - repo_host1
+          - repo_duplicated
+      group_2:
+        testvar: gv_host2
+        repolist:
+          - repo_host2
+          - repo_duplicated
+    host_vars:
+      merge_vars_host1:
+        testvar: hv_host1
+      merge_vars_host2:
+        testvar: hv_host2
+scenario:
+  # Role tasks are delegated to localhost, and idempotence is not needed,
+  # so modify major sequences to no-op for create, destroy, and idempotence.
+  create_sequence: []
+  destroy_sequence: []
+  converge_sequence:
+    - converge
+  check_sequence:
+    - converge
+    - check
+  test_sequence:
+    - lint
+    - syntax
+    - converge
+verifier:
+  name: testinfra
+  options:
+    v: true
+  lint:
+    name: flake8
